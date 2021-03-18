@@ -107,7 +107,7 @@ sourceDataCommand ch pa code cmd f = do
     x <- bracketP
         (createSendDataCommand ch pa cmd)
         (liftIO . hClose)
-        (f . sIOHandleImpl)
+        (f . (sIOHandleImpl $ FTP.originalHost ch))
     resp <- getResponse ch
     debugResponse resp
     return x

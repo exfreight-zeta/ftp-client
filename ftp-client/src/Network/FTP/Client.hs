@@ -99,6 +99,7 @@ data Handle = Handle
     , recv :: Int -> IO ByteString
     , recvLine :: IO ByteString
     , security :: Security
+    , originalHost :: String
     }
 
 data FTPMessage = SingleLine ByteString | MultiLine [ByteString]
@@ -371,13 +372,14 @@ createSIOHandle :: (MonadIO m, MonadMask m) => String -> Int -> m SIO.Handle
 createSIOHandle host portNum = withSocketPassive host portNum
     $ liftIO . flip S.socketToHandle SIO.ReadWriteMode
 
-sIOHandleImpl :: SIO.Handle -> Handle
-sIOHandleImpl h = Handle
+sIOHandleImpl :: String -> SIO.Handle -> Handle
+sIOHandleImpl host h = Handle
     { send = C.hPut h
     , sendLine = C.hPutStrLn h
     , recv = C.hGetSome h
     , recvLine = C.hGetLine h
     , security = Clear
+    , originalHost = host
     }
 
 withSIOHandle
@@ -389,7 +391,7 @@ withSIOHandle
 withSIOHandle host portNum f = M.bracket
     (liftIO $ createSIOHandle host portNum)
     (liftIO . SIO.hClose)
-    (f . sIOHandleImpl)
+    (f . sIOHandleImpl host)
 
 -- | Takes a host name and port. A handle for interacting with the server
 -- will be returned in a callback.
@@ -419,9 +421,10 @@ withDataSocketPasv
     -> m a
 withDataSocketPasv h f = do
     (host, portNum) <- pasv h
-    debugPrint $ "Host: " <> host
+    debugPrint $ "Host (ignored): " <> host
+    debugPrint $ "Host (used): " <> originalHost h
     debugPrint $ "Port: " <> show portNum
-    withSocketPassive host portNum f
+    withSocketPassive (originalHost h) portNum f
 
 withDataSocketActive
     :: (MonadIO m, MonadMask m)
@@ -490,7 +493,7 @@ withDataCommand ch pa code cmd f = do
     x <- M.bracket
         (createSendDataCommand ch pa cmd)
         (liftIO . SIO.hClose)
-        (f . sIOHandleImpl)
+        (f . (sIOHandleImpl $ originalHost ch))
     resp <- getResponse ch
     debugResponse resp
     return x
@@ -539,11 +542,11 @@ createTLSConnection ::
     -> Int
     -> m (FTPResponse, Connection)
 createTLSConnection host portNum = do
-    h <- createSIOHandle host portNum
-    let insecureH = sIOHandleImpl h
+    handle <- createSIOHandle host portNum
+    let insecureH = sIOHandleImpl host handle
     resp <- getResponse insecureH
     sendCommand insecureH Auth
-    conn <- connectTLS h host portNum
+    conn <- connectTLS handle host portNum
     return (resp, conn)
 
 tlsHandleImpl :: Connection -> Handle
